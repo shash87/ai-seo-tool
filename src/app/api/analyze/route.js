@@ -5,9 +5,13 @@ import * as cheerio from 'cheerio'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
 
-export const config = {
-  maxDuration: 60, // Set maximum duration to 60 seconds
-}
+// export const config = {
+//   maxDuration: 60, // Set maximum duration to 60 seconds
+// }
+
+export const runtime = 'edge'
+export const dynamic = 'force-dynamic'
+
 
 export async function POST(req) {
   const { url, userId } = await req.json()
