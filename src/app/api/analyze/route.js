@@ -1,18 +1,25 @@
 import { NextResponse } from 'next/server'
-// import { PrismaClient } from '@prisma/client'
 import prisma from '@/lib/prisma'
-
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import * as cheerio from 'cheerio'
 
-// const prisma = new PrismaClient()
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+
+export const config = {
+  maxDuration: 60, // Set maximum duration to 60 seconds
+}
 
 export async function POST(req) {
   const { url, userId } = await req.json()
 
   try {
-    const response = await fetch(url)
+    // Implement a timeout for the fetch request
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+
+    const response = await fetch(url, { signal: controller.signal })
+    clearTimeout(timeoutId)
+
     const html = await response.text()
     const $ = cheerio.load(html)
 
@@ -25,20 +32,13 @@ export async function POST(req) {
     const internalLinks = $('a[href^="/"], a[href^="' + url + '"]').length
     const externalLinks = $('a[href^="http"]:not([href^="' + url + '"])').length
 
-    // Check for responsive design
     const hasViewportMeta = $('meta[name="viewport"]').length > 0
-
-    // Check for structured data
     const hasStructuredData = $('script[type="application/ld+json"]').length > 0
-
-    // Check for social media meta tags
     const hasOpenGraph = $('meta[property^="og:"]').length > 0
     const hasTwitterCard = $('meta[name^="twitter:"]').length > 0
-
-    // Check for SSL
     const isSSL = url.startsWith('https')
 
-    // Generate AI recommendations
+    // Generate AI recommendations with a timeout
     const model = genAI.getGenerativeModel({ model: "gemini-pro" })
     const prompt = `As an advanced SEO expert, analyze the following website data and provide detailed, actionable recommendations:
 
@@ -71,7 +71,12 @@ export async function POST(req) {
 
     For each point, explain why it's important and provide specific suggestions for improvement.`
 
-    const result = await model.generateContent(prompt)
+    const aiAnalysisPromise = model.generateContent(prompt)
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('AI analysis timeout')), 30000)
+    )
+    const result = await Promise.race([aiAnalysisPromise, timeoutPromise])
+
     const recommendations = result.response.text()
 
     // Save the analysis to the database
@@ -99,6 +104,12 @@ export async function POST(req) {
     return NextResponse.json(analysis)
   } catch (error) {
     console.error('Error:', error)
+    if (error.name === 'AbortError') {
+      return NextResponse.json({ error: 'Fetching the webpage timed out' }, { status: 504 })
+    }
+    if (error.message === 'AI analysis timeout') {
+      return NextResponse.json({ error: 'AI analysis timed out' }, { status: 504 })
+    }
     return NextResponse.json({ error: 'An error occurred during analysis' }, { status: 500 })
   }
 }
